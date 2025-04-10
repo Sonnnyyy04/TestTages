@@ -11,7 +11,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"sync"
 )
 
 const (
@@ -25,7 +24,6 @@ type FileService struct {
 	pb.UnimplementedFileServiceServer
 	UploadDownloadSem chan struct{}
 	ListFileSem       chan struct{}
-	FileMutex         sync.RWMutex
 }
 
 func New() *FileService {
@@ -40,6 +38,12 @@ func (f *FileService) UploadFile(stream pb.FileService_UploadFileServer) error {
 	defer func() {
 		<-f.UploadDownloadSem
 	}()
+	ctx := stream.Context()
+	select {
+	case <-ctx.Done():
+		return status.Error(codes.Canceled, "запрос отменён клиентом")
+	default:
+	}
 	firstChunk, err := stream.Recv()
 	if err != nil {
 		return status.Errorf(codes.InvalidArgument, "не удалось получить первый чанк: %v", err)
@@ -76,9 +80,11 @@ func (f *FileService) ListFiles(ctx context.Context, req *pb.ListFilesRequest) (
 	defer func() {
 		<-f.ListFileSem
 	}()
-	//ctx
-	f.FileMutex.RLock()
-	defer f.FileMutex.RUnlock()
+	select {
+	case <-ctx.Done():
+		return nil, status.Error(codes.Canceled, "запрос отменён клиентом")
+	default:
+	}
 	records, err := os.ReadDir(storagePath)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "не удалось прочитать директорию: %v", err)
@@ -113,6 +119,12 @@ func (f *FileService) DownloadFiles(req *pb.DownloadFilesRequest, stream pb.File
 	defer func() {
 		<-f.UploadDownloadSem
 	}()
+	ctx := stream.Context()
+	select {
+	case <-ctx.Done():
+		return status.Error(codes.Canceled, "запрос отменён клиентом")
+	default:
+	}
 	filePath := filepath.Join(storagePath, req.GetFilename())
 	file, err := os.Open(filePath)
 	if err != nil {
